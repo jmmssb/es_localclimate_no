@@ -1,0 +1,171 @@
+---
+title: "Ecosystem Service Climate Regulation in Cities | Norway"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: cosmo
+    code_folding: hide
+---
+
+```{css, echo=FALSE}
+table {
+  float: left;
+}
+```
+
+Magnus Merkle (SSB)
+
+Naturregnskapsprosjekt, 18. August 2026
+
+\
+
+# Changelog
+
+Changes since version 0:
+
+- First version
+
+# Abstract and Limitation
+
+In this notebook we quantify the ecosystem service of local climate regulation (climate regulation in cities) for the Norwegian mainland. Most operations are executed with functions from R packages dplyr and tidyr (for general data formatting), terra (for geospatial data analysis), and stats (for regressions). The notebook is created on the basis of the following sources:
+
+- INCA GIS Plugin Code Repository (2026). Last accessed 13 August 2026, the relevant script is here: <https://code.europa.eu/inca/gis-plugins/gis-plugins/-/blob/main/src/inca/localclimate/__init__.py>
+- Marando et al. (2022) Urban heat island mitigation by green infrastructure in European Functional Urban Areas. Sustainable Cities and Society, 103564
+- Eurostat (2026) Ecosystem accounts handbook, 2026 edition
+- Immerzeel & Korkou (2024) Evaluation of the INCA-Tool for the purpose of ecosystem services accounting in Norway. EU Grants Project 2022-NO-EGD- Work Package 2. Norwegian Institute for Nature Research
+
+The quantification process follows the Eurostat Ecosystem accounts handbook.
+
+# 1. Filepaths and Functions
+
+The main functions we use are part of dplyr and tidyr, terra, and stats.
+
+```{r, results = 'hide', message = FALSE, warning=FALSE}
+# make space
+rm(list = ls())
+# packages
+library(dplyr)
+library(tidyr)
+library(terra)
+library(sf)
+library(knitr)
+library(viridisLite)
+library(here)
+library(stats)
+library("tinytex")
+# filepath
+dfp<-file.path("C:","Users","muk",
+               paste0("OneDrive - Statistisk sentralbyr","\U00E5"),
+               "data","INCA")
+# file path to results
+rfp<-file.path(here::here(),"results")
+# A function to extract levels vectors from factor data stored in rasters 
+# rst is raster file, lrn is layer name
+gc()
+```
+
+# 2. Data Sources
+
+Here is a table of data sources used in this project.
+
+```{r}
+dfs<-data.frame(matrix(nrow=10,ncol=8))
+colnames(dfs) <- c("Input to","Data","Name","Provider","Resolution","Year","Future Updates","Notes")
+
+dfs[1,]<-c("Estimation and simulation",
+           "Reference land cover map (LCM) with lookup table",
+           "Grunnkart_OT",
+           "Kartverket, NIBIO, SSB, Mdir",
+           "100m grid",
+           "2024",
+           "2025",
+           "This is probably the most important input because we derive ecosystems, curve numbers, and economic assets from it. Updates should ideally be used to quantify changes in service flows over time. Comparability over time would be relevant for this purpose.")
+dfs[2,]<-c("Estimation and simulation",
+           "City shapefiles",
+           "....",
+           ".....",
+           "Vector",
+           "...",
+           "...",
+           "The delineation of city boundaries is important because it defines how much of the surrounding greenspace is taken into account.")
+dfs[3,]<-c("Estimation and simulation",
+           "Local surface temperature data",
+           "...",
+           "Eurostat (INCA default version 2026)",
+           ".... grid",
+           "....",
+           "....",
+           "....")
+dfs[4,]<-c("Estimation",
+           "Evaporation ...",
+           "....",
+           "...",
+           "...",
+           "...",
+           "...",
+           "...")
+dfs[5,]<-c("Estimation",
+           "Weather station data",
+           "...",
+           "...",
+           "not gridded",
+           "...",
+           "...",
+           "...")
+#print
+kable(dfs)
+# clean up
+rm(dfs)
+```
+
+# 3. Estimate a Model of LST for each City
+
+## 3.1 Overview
+
+In this first step we use gridded data to estimate a linear model of local surface temperature (LST) predicted by tree cover density (TCD) and evaporation. We estimate this model for each city, so it requires that our gridded data is cropped to city boundaries. The model is: 
+$$ LST_{j} = \alpha_{1,j} + \beta_{1} TCD + \gamma_{1} EVAP $$ 
+For each city, we save the estimated intercept of the linear model $\widehat{\alpha_{1,j}}$, which is equal to the LST in a scenario with no trees and evaporation. This is a purely hypothetical number with no interpretative value. It is only needed as an intermediate step.
+
+## 3.2 Import data
+
+Read in city shapefiles, LST raster, TCD raster, EVAP raster.
+
+## 3.3 Run regressions
+
+We loop across cities here. In each city we run a regression where grid cells are units of observation. Predicting LST with TCD and EVAP. We store the resulting intercepts for each city.
+
+# 4. Estimate a Model of Air Temperature
+
+## 4.1 Overview¨
+
+In this second step we use weather station data to estimate a linear model of maximum air temperature predicted by local surface temperature and latitude. Here is the unit of observation is weather stations. We save the estimated coefficients.
+
+## 4.2 Import data
+
+Read in a single dataframe containing weather station data.
+
+## 4.3 Run regression
+
+A single regression to estimate a linear model. Predicting maximum air temperature with local surface temperature and latitude. The model we estimate is: 
+$$ T^{air} = \beta_{2} LST + \gamma_{2}LAT $$
+
+# 5. Simulate Air Temperature for the City Grids
+
+## 5.1 Overview
+
+Here we now apply the estimated coefficients from the previous two steps to generate simulated gridded data. We do this for each city. Given that we have observed LST data at grid level, we compute for each grid cell $i$ the expected air temperature 
+$$ T^{air}_{j,i} = \widehat{\beta_{2}} LST_{j,i} + \widehat{\gamma_{2}} latitude_{j} $$. 
+
+Then we compute for each grid cell $i$ the expected air temperature in a no-vegetation scenario, i.e. where $LST_{j,i} = \widehat{\alpha_{1,j}}$. So $$ T^{air,0}_{ji} = \widehat{\beta_{2}} \widehat{\alpha_{1,j}} + \widehat{\gamma_{2}} latitude_{j} $$. 
+The cooling effect is then retrieved for each grid cell $i$ in city $j$ as 
+$$ cooling_{j,i} = T^{air}_{j,i} - T^{air,0}_{j,i} $$.
+
+## 5.2 Create cooling rasters
+
+Make a loop where we compute the cooling rasters for each city.
+
+# 6. Summarise results
+
+Here we now summarise the data across grid cells (and time).
