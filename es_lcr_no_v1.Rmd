@@ -29,7 +29,7 @@ Changes since version 0:
 
 # Abstract and Limitation
 
-In this notebook we quantify the ecosystem service of local climate regulation (climate regulation in cities) for the Norwegian mainland. Most operations are executed with functions from R packages dplyr and tidyr (for general data formatting), terra (for geospatial data analysis), and stats (for regressions). The notebook is created on the basis of the following sources:
+In this notebook we quantify the ecosystem service of local climate regulation (climate regulation in cities) for the Norwegian mainland in 2024. Most operations are executed with functions from R packages dplyr and tidyr (for general data formatting), terra (for geospatial data analysis), and stats (for regressions). The notebook is created on the basis of the following sources:
 
 - INCA GIS Plugin Code Repository (2026). Last accessed 13 August 2026, the relevant script is here: <https://code.europa.eu/inca/gis-plugins/gis-plugins/-/blob/main/src/inca/localclimate/__init__.py>
 - Marando et al. (2022) Urban heat island mitigation by green infrastructure in European Functional Urban Areas. Sustainable Cities and Society, 103564
@@ -40,7 +40,7 @@ The quantification process follows the Eurostat Ecosystem accounts handbook.
 
 # 1. Filepaths and Functions
 
-The main functions we use are part of dplyr and tidyr, terra, and stats.
+The main functions we use are part of R packages dplyr and tidyr, terra, and stats.
 
 ```{r, results = 'hide', message = FALSE, warning=FALSE}
 # make space
@@ -54,7 +54,7 @@ library(knitr)
 library(viridisLite)
 library(here)
 library(stats)
-library("tinytex")
+library(tinytex)
 # filepath
 dfp<-file.path("C:","Users","muk",
                paste0("OneDrive - Statistisk sentralbyr","\U00E5"),
@@ -124,13 +124,162 @@ rm(dfs)
 
 ## 3.1 Overview
 
-In this first step we use gridded data to estimate a linear model of local surface temperature (LST) predicted by tree cover density (TCD) and evaporation. We estimate this model for each city, so it requires that our gridded data is cropped to city boundaries. The model is: 
+In this first step we use gridded data to estimate a linear model of local surface temperature (LST) predicted by tree cover density (TCD) and evaporation. We estimate this model for each city, so it requires that our gridded data is cropped to city boundaries plus a buffer of 150 metres (as specified in Eurostat's handbook). The model is: 
 $$ LST_{j} = \alpha_{1,j} + \beta_{1} TCD + \gamma_{1} EVAP $$ 
-For each city, we save the estimated intercept of the linear model $\widehat{\alpha_{1,j}}$, which is equal to the LST in a scenario with no trees and evaporation. This is a purely hypothetical number with no interpretative value. It is only needed as an intermediate step.
+For each city, we save the estimated intercept of the linear model $\widehat{\alpha_{1,j}}$, which is equal to the LST in a scenario with no trees and evaporation. This is a purely hypothetical number with no interpretative value. It is needed as an intermediate step.
 
 ## 3.2 Import data
 
-Read in city shapefiles, LST raster, TCD raster, EVAP raster.
+Read in city shapefiles, LST raster, TCD raster, EVAP raster. We also import Norwegian Land Cover data and some Open Street Map data, for orientation purpose. Then crop all raster files to the Norwegian city boundaries with a 150m buffer. 
+
+We start by identifying cities in Norway that are counted within category "city" in the DGURBA dataset.
+```{r,message = FALSE, results = 'hide'}
+gc()
+# read city shapefiles ---------------------------------------------------------
+# Readme file in INCA's data repository states DEGURBA should be used for 2026
+# reporting
+cityb<-terra::vect(file.path(dfp,"version_2026_7",
+                             "inca_input_local_climate_regulation","Urban_Areas",
+                             "2021","DEGURBA",
+                             "DGURBA_RG_01M_2021_4258.shp"))
+# MM: I checked the data and it has five categories. 1,2 and 3 relate to  degree 
+# of urbanisation (1 is cities, 2 is towns and semi-dense areas, 3 is rural). 
+# Additionally there is category 9 which exists only in Cyprus, so irrelevant 
+# for us. And then there is category 0 which is used in lakes and such. Also not 
+# relevant for us. So we subset the data to Norway only.
+cityb<-cityb[cityb$CNTR_CODE == "NO",]
+# And then we subset to feature category 1 urban only.
+cityb<-cityb[cityb$DGURBA == 1,]
+# For further operations we reproject the map to EPSG 25833 and we add a 150m
+# buffer to the LAU polygons, as suggested by the handbook
+cityb <- terra::project(cityb,"EPSG:25833")
+cityb_buf <- terra::buffer(cityb,150)
+# print the city names
+unique(cityb$LAU_NAME)
+```
+So we get `r length(unique(cityb$LAU_NAME))` LAU in Norway that qualify as city. If we count Sandnes to Stavanger, and Bærum, Rælingen and Lørenskog to Oslo, we have four cities in total, namely Bergen, Oslo, Stavanger, and Trondheim. Let's have a look at the land cover map and street infrastructure for each of the LAU to be considered.
+```{r,message = FALSE, results = 'hide', fig.height = 9}
+gc()
+# read Grunnkartet -------------------------------------------------------------
+lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
+# project to what we use in this project
+lcm <- terra::project(lcm,"EPSG:25833")
+terra::plot(lcm, main="Norwegian Land Cover Map (Grunnkart)")
+
+# Make a plot of all cities, possibly simplify Grunnkartet's categorisation
+
+```
+
+
+
+
+Now next we need to identify which of these cities have experienced maximum daily temperatures of at least 25 degrees celsius in the reference year of 2024. For this purpose we first download and import Norwegian meteorological data for 2024 covering the four cities.
+
+MM to revisit the selection of weather stations based on actual LAU shapes.
+
+```{r,message = FALSE, results = 'hide'}
+gc()
+# read in meteorogogical data for stations inside the above city LAUs for 2024 -
+tempd <- read.csv(file.path(here::here(),"ancillary_data",
+                            "NO_2024_citylau_dailymaxtemp.csv"),sep=";")
+colnames(tempd)<-c("station_name","station_code","date","maxtemp")
+tempd$maxtemp <- sub(",",".",tempd$maxtemp )
+tempd$maxtemp <- as.numeric(tempd$maxtemp)
+# save all cities with daily temperatures above 25 degrees
+stations<-tempd %>% filter(maxtemp >= 25) %>% select(station_name) %>% unique()
+# check for months in each city
+heatmonths<-list()
+for (i in 1:nrow(stations)){
+  heatmonths[i]<- tempd %>% filter(maxtemp >= 25) %>% filter(station_name==stations[i,1]) %>% select(date) %>% unique()
+}
+names(heatmonths)<-stations[,1]
+for(i in 1:nrow(stations)){
+  print(stations[i,1])
+  print(unique(substr(heatmonths[[i]],4,5)))
+}
+```
+So this shows that June and July are the months where we have observed daily max temps exceeding 25 degrees in all weather stations within the cities in question in 2024. We therefore pick June and July for the LST data, which we read in next.
+```{r}
+# read LST raster file ---------------------------------------------------------
+# Here we have data available for June, July, August, September, but we only
+# pick June and July, as described above.
+lstr_6<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Land_Surface_Temperature","2024",
+                           "06_LST_2024_eu_masked.tif"))
+lstr_7<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Land_Surface_Temperature","2024",
+                           "07_LST_2024_eu_masked.tif"))
+# rough crop ext
+norcrop <- ext(
+  3.5e6, 5.5e6, # xmin, xmax
+  3.5e6, 5.5e6 # ymin, ymax
+)
+lstr_6_no <- crop(lstr_6,norcrop)
+lstr_7_no <- crop(lstr_7,norcrop)
+# reproject
+lstr_6_no <- terra::project(lstr_6_no,"EPSG:25833")
+lstr_7_no <- terra::project(lstr_7_no,"EPSG:25833")
+# mask to city LAUs
+lstr_6_no <- mask(crop(lstr_6_no,cityb_buf),cityb_buf)
+lstr_7_no <- mask(crop(lstr_7_no,cityb_buf),cityb_buf)
+
+
+
+
+# Now we reproject and then crop the rasters.
+lstr_6<-terra::project(lstr_6,"EPSG:25833")
+lstr_7<-terra::project(lstr_7,"EPSG:25833")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## MM find out what the unit of this is. And need to find out which month of the 
+# data we should use. There is something about a scaling factor that should be
+# applied. See here: https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature
+# MM: what is the day these numbers come from? Or is it something like a monthly
+# average?
+# need to dig a bit in INCA's GitLab repo and in Lavinia's notes. Possibly also
+# NINA's report. Bart at Nina used October. Let's check what Lavinia used.
+
+# Handbook provides guidance on which cities to include. So that is useful.
+# if in doubt, just use copernicus data for that. 
+
+# and we should also use a 150m buffer zone to the city LAUs
+
+# see handbook p. 169 - check weather station data for daily max temp. And if
+# that is not available, check the copernicus dataset linked in the handbook. 
+# this is to inform the selection of months considered in the analysis.
+
+# read TCD raster file ---------------------------------------------------------
+lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
+terra::plot(lcm, main="Norwegian Land Cover Map (Grunnkart)")
+
+# read EVAP raster file --------------------------------------------------------
+lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
+terra::plot(lcm, main="Norwegian Land Cover Map (Grunnkart)")
+
+# MMQ then we crop all rasters to the city shapefiles, right? 
+```
+
+For illustrative purpose we plot the city shapes here, with the Norwegian land cover map (Grunnkartet) as background. This is to see how much greenspace is present in the cities as defined here.
+
+
+
+So in Norway the only LAUs that fall within Eurostat's "city" category are Oslo (with Bærum, Rælingen, Lørenskog), Trondheim, Bergen, and Stavanger (with Sandnes).
 
 ## 3.3 Run regressions
 
