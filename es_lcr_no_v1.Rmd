@@ -170,13 +170,9 @@ terra::plot(lcm, main="Norwegian Land Cover Map (Grunnkart)")
 
 ```
 
-
-
-
 Now next we need to identify which of these cities have experienced maximum daily temperatures of at least 25 degrees celsius in the reference year of 2024. For this purpose we first download and import Norwegian meteorological data for 2024 covering the four cities.
 
 MM to revisit the selection of weather stations based on actual LAU shapes.
-
 ```{r,message = FALSE, results = 'hide'}
 gc()
 # read in meteorogogical data for stations inside the above city LAUs for 2024 -
@@ -198,7 +194,7 @@ for(i in 1:nrow(stations)){
   print(unique(substr(heatmonths[[i]],4,5)))
 }
 ```
-So this shows that June and July are the months where we have observed daily max temps exceeding 25 degrees in all weather stations within the cities in question in 2024. We therefore pick June and July for the LST data, which we read in next.
+So this shows that June and July are the months where we have observed daily max temps exceeding 25 degrees in all weather stations within the cities in question in 2024. August and September are months in which some city LAU have observed max temps exceeding 25 degrees. The Eurostat handbook suggests to use an inclusive approach. We therefore pick all available months for the LST data, which we read in next.
 ```{r}
 # read LST raster file ---------------------------------------------------------
 # Here we have data available for June, July, August, September, but we only
@@ -211,6 +207,14 @@ lstr_7<-terra::rast(file.path(dfp,"version_2026_7",
                            "inca_input_local_climate_regulation",
                            "Land_Surface_Temperature","2024",
                            "07_LST_2024_eu_masked.tif"))
+lstr_8<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Land_Surface_Temperature","2024",
+                           "08_LST_2024_eu_masked.tif"))
+lstr_9<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Land_Surface_Temperature","2024",
+                           "09_LST_2024_eu_masked.tif"))
 # rough crop ext
 norcrop <- ext(
   3.5e6, 5.5e6, # xmin, xmax
@@ -218,72 +222,154 @@ norcrop <- ext(
 )
 lstr_6_no <- crop(lstr_6,norcrop)
 lstr_7_no <- crop(lstr_7,norcrop)
+lstr_8_no <- crop(lstr_8,norcrop)
+lstr_9_no <- crop(lstr_9,norcrop)
+
 # reproject
 lstr_6_no <- terra::project(lstr_6_no,"EPSG:25833")
 lstr_7_no <- terra::project(lstr_7_no,"EPSG:25833")
+lstr_8_no <- terra::project(lstr_8_no,"EPSG:25833")
+lstr_9_no <- terra::project(lstr_9_no,"EPSG:25833")
+
 # mask to city LAUs
 lstr_6_no <- mask(crop(lstr_6_no,cityb_buf),cityb_buf)
 lstr_7_no <- mask(crop(lstr_7_no,cityb_buf),cityb_buf)
+lstr_8_no <- mask(crop(lstr_8_no,cityb_buf),cityb_buf)
+lstr_9_no <- mask(crop(lstr_9_no,cityb_buf),cityb_buf)
 
-
-
-
-# Now we reproject and then crop the rasters.
-lstr_6<-terra::project(lstr_6,"EPSG:25833")
-lstr_7<-terra::project(lstr_7,"EPSG:25833")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## MM find out what the unit of this is. And need to find out which month of the 
-# data we should use. There is something about a scaling factor that should be
-# applied. See here: https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature
-# MM: what is the day these numbers come from? Or is it something like a monthly
-# average?
-# need to dig a bit in INCA's GitLab repo and in Lavinia's notes. Possibly also
-# NINA's report. Bart at Nina used October. Let's check what Lavinia used.
-
-# Handbook provides guidance on which cities to include. So that is useful.
-# if in doubt, just use copernicus data for that. 
-
-# and we should also use a 150m buffer zone to the city LAUs
-
-# see handbook p. 169 - check weather station data for daily max temp. And if
-# that is not available, check the copernicus dataset linked in the handbook. 
-# this is to inform the selection of months considered in the analysis.
-
-# read TCD raster file ---------------------------------------------------------
-lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
-terra::plot(lcm, main="Norwegian Land Cover Map (Grunnkart)")
-
-# read EVAP raster file --------------------------------------------------------
-lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
-terra::plot(lcm, main="Norwegian Land Cover Map (Grunnkart)")
-
-# MMQ then we crop all rasters to the city shapefiles, right? 
+## MM comment: Not sure what the unit of this data is. There is something about 
+# a scaling factor that should be applied. See here: 
+# https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature
+# I have tried it and it returns very strange values. So don't consider it 
+# further. As long as the data uses some consistent unit (even if we do not 
+# know it), the second stage should return meaningful values.
 ```
 
-For illustrative purpose we plot the city shapes here, with the Norwegian land cover map (Grunnkartet) as background. This is to see how much greenspace is present in the cities as defined here.
+Then plot the data, to show that it has gaps. We use the land cover map as background. First for June:
+```{r,message = FALSE, results = 'hide', fig.height = 9}
+# Let's plot the data
+for(i in 1:nrow(cityb_buf)){
+plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"June"), legend=F)
+plot(mask(crop(lstr_6_no, cityb_buf[i,]),cityb_buf[i,]),add=T,alpha=0.8)
+}
+```
 
+Then for July:
+```{r,message = FALSE, results = 'hide', fig.height = 9}
+# Let's plot the data
+for(i in 1:nrow(cityb_buf)){
+plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"July"), legend=F)
+plot(mask(crop(lstr_7_no, cityb_buf[i,]),cityb_buf[i,]),add=T,alpha=0.8)
+}
+```
+The gaps do not look much different in other available months, so I omit plotting those here.
 
+Then we read in the other raster files needed. Tree cover density and then evaporation. For evaporation we have the choice between different datasets. One covering July to August, one covering June to August, and a third covering June to September. There is no guidance in the Eurostat handbook on which data to choose. To match the LST data selection, we choose to use June to September.
+```{r}
+# read TCD raster file ---------------------------------------------------------
+tcdr<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Tree_Cover_Density","2023",
+                           "TCD_100m_2023_compressed.tif"))
+# rough crop
+tcdr_no <- crop(tcdr,norcrop)
+# reproject
+tcdr_no <- terra::project(tcdr_no,"EPSG:25833")
+# mask to city lau
+tcdr_no <- mask(crop(tcdr_no,cityb_buf),cityb_buf)
+# MM I have checked the resulting data and it looks fine. No gaps.
 
-So in Norway the only LAUs that fall within Eurostat's "city" category are Oslo (with Bærum, Rælingen, Lørenskog), Trondheim, Bergen, and Stavanger (with Sandnes).
+# read EVAP raster file --------------------------------------------------------
+evapr<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Vegetation_Evapotranspiration","2024",
+                           "interc_transp_2024_Jun-Jul-Aug-Sept.tif"))
+# rough crop
+evapr_no <- crop(evapr,norcrop)
+# reproject
+evapr_no <- terra::project(evapr_no,"EPSG:25833")
+# resample (because the data has a different resolution)
+evapr_no <- terra::resample(evapr_no, tcdr_no)
+# mask to city lau
+evapr_no <- mask(crop(evapr_no,cityb_buf),cityb_buf)
+# When plotting the resulting map we see that it is a bit patchy, too. Possibly
+# revisit later.
+```
 
 ## 3.3 Run regressions
 
-We loop across cities here. In each city we run a regression where grid cells are units of observation. Predicting LST with TCD and EVAP. We store the resulting intercepts for each city.
+We loop across cities and across available months here. In each city and month we run a regression where grid cells are units of observation. Predicting LST with TCD and EVAP. We store the resulting intercepts for each city and month.
+
+```{r}
+# months to consider
+mdr<-c(6,7,8,9)
+
+# our dataframe for results
+reg1df<-as.data.frame(matrix(nrow=1,ncol=10))
+colnames(reg1df)<-c("month","city","est_intercept","adj_r2","n_used","n_rm","n_rm_p_due_lst_only","n_rm_p_due_tcd_only","n_rm_p_due_evap_only","n_rm_p_due_several")
+# function
+first_regression_function<-function(cityshp,lst_rfile,tcd_rfile,evap_rfile){
+  # Step 1: Crop the data to the right shape, stack it, and turn into df
+  estack<-c(mask(crop(lst_rfile, cityshp),cityshp),
+            mask(crop(tcd_rfile, cityshp),cityshp),
+            mask(crop(evap_rfile, cityshp),cityshp))
+  names(estack)<-c("lst","tcd","evap")
+  edf<-as.data.frame(estack)
+  rm(estack)
+  # Step 2: Run regression
+  elm <- lm(lst ~ tcd + evap, data = edf)
+  # Step 3: Save relevant info
+  rv<-vector()
+  # estimated intercept of the linear model
+  rv[1]<- elm$coefficients[1]
+  # adjusted r squared
+  rv[2]<- summary(elm)$adj.r.squared
+  # observations used
+  rv[3]<- nobs(elm)
+  # number of observations removed due to missing data
+  rv[4]<- nrow(edf) - nobs(elm)
+  # proportion of removed ovservations due to missing lst data only
+  rv[5]<- round(sum(is.na(edf$lst) &
+                     !is.na(edf$evap) &
+                     !is.na(edf$tcd)) / rv[4],digits=2)
+  # proportion of removed ovservations due to missing tcd data only
+  rv[6]<- round(sum(is.na(edf$tcd) &
+                      !is.na(edf$evap) &
+                      !is.na(edf$lst)) / rv[4],digits=2)
+  # proportion of removed ovservations due to missing evap data only
+  rv[7]<- round(sum(is.na(edf$evap) &
+                      !is.na(edf$lst) &
+                      !is.na(edf$tcd)) / rv[4],digits=2)
+  # proportion of removed observations due to several missing variables
+  rv[8]<-round(sum(rowSums(is.na(edf[, c("lst", "evap", "tcd")])) >= 2)/rv[4],digits=2)
+  # clean up and return result
+  rm(edf,elm)
+  return(rv)
+}
+
+# stack our lst files
+
+lststack<-c(lstr_6_no,lstr_7_no,lstr_8_no,lstr_9_no)
+
+## then loop across months and cities
+rl<-list()
+for(j in 1:length(mdr)){
+  rl[[j]]<-reg1df
+  for(i in 1:nrow(cityb_buf)){
+    rl[[j]][i,1]<-mdr[j]
+    rl[[j]][i,2]<-as.data.frame(cityb_buf[i,])$LAU_NAME
+    rl[[j]][i,3:10]<-first_regression_function(cityshp = cityb_buf[i,],
+                                lst_rfile = lststack[[j]],
+                                tcd_rfile = tcdr_no,
+                                evap_rfile = evapr_no)
+  }
+}
+firstdf<-do.call("rbind",rl)
+rm(reg1df,rl)
+# print result
+firstdf
+```
+
 
 # 4. Estimate a Model of Air Temperature
 
