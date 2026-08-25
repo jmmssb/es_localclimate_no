@@ -81,23 +81,23 @@ dfs[1,]<-c("Estimation and simulation",
            "100m grid",
            "2024",
            "2025",
-           "This is probably the most important input because we derive ecosystems, curve numbers, and economic assets from it. Updates should ideally be used to quantify changes in service flows over time. Comparability over time would be relevant for this purpose.")
+           "...")
 dfs[2,]<-c("Estimation and simulation",
            "City shapefiles",
-           "....",
-           ".....",
+           "DGURBA_RG_01M_2021_4258",
+           "Eurostat (INCA default version 2026)",
            "Vector",
-           "...",
-           "...",
+           "2021",
+           "unknown",
            "The delineation of city boundaries is important because it defines how much of the surrounding greenspace is taken into account.")
 dfs[3,]<-c("Estimation and simulation",
            "Local surface temperature data",
-           "...",
+           "07_LST_2024_eu_masked",
            "Eurostat (INCA default version 2026)",
-           ".... grid",
-           "....",
-           "....",
-           "....")
+           "100m grid",
+           "2024",
+           "unknown",
+           "This is based on data from USGS, processed by Eurostat to use for European ecosystem service accounting. The unit of the data is unclear, and it has gaps for most of European cities. It is also unclear whether these data are monthly averages or observations of maximum temperatures.")
 dfs[4,]<-c("Estimation",
            "Evaporation ...",
            "....",
@@ -237,12 +237,12 @@ lstr_7_no <- mask(crop(lstr_7_no,cityb_buf),cityb_buf)
 lstr_8_no <- mask(crop(lstr_8_no,cityb_buf),cityb_buf)
 lstr_9_no <- mask(crop(lstr_9_no,cityb_buf),cityb_buf)
 
-## MM comment: Not sure what the unit of this data is. There is something about 
-# a scaling factor that should be applied. See here: 
+## MM comment: The unit of the data is Kelvin. Vito has applied the scaling factor
+# that is mentioned here: 
 # https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature
-# I have tried it and it returns very strange values. So don't consider it 
-# further. As long as the data uses some consistent unit (even if we do not 
-# know it), the second stage should return meaningful values.
+# You can trace the step in line 131 here
+# https://code.europa.eu/inca/gis-plugins/gis-plugins/-/blob/main/src/inca/localclimate/preprocessing/preprocess_LST.js?ref_type=heads
+# 
 ```
 
 Then plot the data, to show that it has gaps. We use the land cover map as background. First for June:
@@ -366,7 +366,31 @@ for(j in 1:length(mdr)){
 }
 firstdf<-do.call("rbind",rl)
 rm(reg1df,rl)
-# print result
+
+# save intercept in raster stack
+# one raster per month
+intercept_rasters <- vector("list", length(mdr))
+# loop across months
+for (j in seq_along(mdr)) {
+    # subset results for current month
+  month_df <- subset(firstdf, month == mdr[j])
+    # copy polygons
+  city_month <- cityb_buf
+    # attach intercepts and convert to degree celsius
+  city_month$est_intercept <- month_df$est_intercept[
+    match(city_month$LAU_NAME, month_df$city)
+  ] - 273.15
+    # rasterize
+  intercept_rasters[[j]] <- terra::rasterize(
+    city_month,
+    lstr_6_no, # as a template
+    field = "est_intercept"
+  )
+}
+# create SpatRaster stack
+intercept_stack <- rast(intercept_rasters)
+names(intercept_stack) <- paste0("intercept_", mdr)
+# print result table
 firstdf
 ```
 
@@ -379,28 +403,153 @@ In this second step we use weather station data to estimate a linear model of ma
 
 ## 4.2 Import data
 
-Read in a single dataframe containing weather station data.
+Read in a single dataframe containing weather station data. This is the training data from the US.
+```{r}
+# read in weather station data
+wstd<-read.csv(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Weather_station_data",
+                           "StationNeighborhood2016.csv"))
+```
 
 ## 4.3 Run regression
 
 A single regression to estimate a linear model. Predicting maximum air temperature with local surface temperature and latitude. The model we estimate is: 
-$$ T^{air} = \beta_{2} LST + \gamma_{2}LAT $$
+$$ T^{maxair} = \beta_{2} LST + \gamma_{2}LAT $$
+```{r}
+# So here we now estimate the model and store the coefficients and adjusted r squared
+wlm <- lm(TempMax ~ st + Ycoor, data = wstd)
+beta2h <- wlm$coefficients['st']
+gamma2h <- wlm$coefficients['Ycoor']
+wlm_adjr2<-summary(wlm)$adj.r.squared
+# tidy up
+rm(wstd,wlm)
+```
 
 # 5. Simulate Air Temperature for the City Grids
 
 ## 5.1 Overview
 
 Here we now apply the estimated coefficients from the previous two steps to generate simulated gridded data. We do this for each city. Given that we have observed LST data at grid level, we compute for each grid cell $i$ the expected air temperature 
-$$ T^{air}_{j,i} = \widehat{\beta_{2}} LST_{j,i} + \widehat{\gamma_{2}} latitude_{j} $$. 
+$$ T^{air}_{j,i} = \widehat{\beta_{2}} LST_{j,i} + \widehat{\gamma_{2}} latitude_{j,i} $$. 
 
-Then we compute for each grid cell $i$ the expected air temperature in a no-vegetation scenario, i.e. where $LST_{j,i} = \widehat{\alpha_{1,j}}$. So $$ T^{air,0}_{ji} = \widehat{\beta_{2}} \widehat{\alpha_{1,j}} + \widehat{\gamma_{2}} latitude_{j} $$. 
+Then we compute for each grid cell $i$ the expected air temperature in a no-vegetation scenario, i.e. where $LST_{j,i} = \widehat{\alpha_{1,j}}$. So 
+$$ T^{air,0}_{ji} = \widehat{\beta_{2}} \widehat{\alpha_{1,j}} + \widehat{\gamma_{2}} latitude_{j,i} $$. 
+
 The cooling effect is then retrieved for each grid cell $i$ in city $j$ as 
 $$ cooling_{j,i} = T^{air}_{j,i} - T^{air,0}_{j,i} $$.
 
 ## 5.2 Create cooling rasters
 
-Make a loop where we compute the cooling rasters for each city.
+Make a loop where we compute the cooling rasters for each city in each month.
+```{r,message = FALSE, results = 'hide', fig.height = 9}
+# first we create a latitude raster
+# Project raster to geographic coordinates
+tmp_ll <- project(lstr_6_no, "EPSG:4326")
+# Create latitude raster
+lat_ll <- init(tmp_ll, "y")
+# Back to the original grid
+lat_r <- project(lat_ll, lstr_6_no)
+rm(tmp_ll,lat_ll)
+# then compute the cooling rasters in a loop across months
+# the loop
+cooling_rasters <- vector("list", length(mdr))
+# loop across months
+for (j in seq_along(mdr)) {
+  # modelled temp
+  tairr <- (lststack[[j]] - 273.15)*beta2h + lat_r*gamma2h
+  # modelled temp no trees
+  tairnr <- intercept_stack[[j]]*beta2h + lat_r*gamma2h
+  # cooling
+  coolingr <- tairr - tairnr
+  # save
+  cooling_rasters[[j]] <- coolingr
+  writeRaster(coolingr,file.path(rfp,paste0("cooling_",mdr[j],".tif")),overwrite=T)
+  # tidy up
+  rm(tairr,tairnr,coolingr)
+}
+# create SpatRaster stack
+cooling_stack <- rast(cooling_rasters)
+names(cooling_stack) <- paste0("Cooling_", mdr)
+plot(cooling_stack)
+# tidy up
+rm(lat_r)
+```
 
 # 6. Summarise results
 
-Here we now summarise the data across grid cells (and time).
+Here we now summarise the data across grid cells (and time). The final outputs are SUT tables. We compute average cooling and weighted average cooling
+
+## 6.1 SUT Norway and NUTS2
+
+### 6.1.1 Average cooling
+
+So first we import lcm data and translate it into the required ecosystem typology.
+```{r}
+# Import LCM and identification lookup
+lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
+lcm2<-lcm
+activeCat(lcm2) <- "Value"
+lcm2<-as.numeric(lcm2)
+lcm_idf<-read.csv(file.path(dfp,"Norway_files","Grunnkart",
+                            "Lookup_grunnkart.csv"))
+lcm_idf <- rbind(lcm_idf,c(NA,9900,"unclassified","uklassifisert"))
+lcm_idf$landcover_id <- as.numeric(lcm_idf$landcover_id)
+
+# make the vector of ecosystem types
+estv<-c("Settlements and other artificial areas",
+        "Cropland",
+        "Grassland",
+        "Forest and woodlands",
+        "Heathlands and shrub",
+        "Sparsely vegetated ecosystems",
+        "Inland wetlands",
+        "Rivers and canals",
+        "Lakes and reservoirs",
+        "Marine inlets and transitional waters",
+        "Coastal beaches, dunes and wetlands",
+        "Marine ecosystems")
+# and add it to our lcm_idf
+lcm_idf['es_type']<-NA
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(100,111,112,121,130,131,132,133,134,135,141,142,152)]<-estv[1] # settlem
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(200)]<-estv[2] # cropl
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(310,320)]<-estv[3] # grassl
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(400,410,420,440)]<-estv[4] # forest
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(520)]<-estv[5] # bush
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(600,611,623,631)]<-estv[6] # sparse
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(720)]<-estv[7] # wetlands
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(810)]<-estv[8] # rivers
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(910)]<-estv[9] # lakes
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(1100)]<-estv[11] # coastal
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(1200)]<-estv[10] # marine inlets
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(9900)]<-estv[12] # marine ecosystems
+# make numeric
+lcm_idf$es_id <- match(lcm_idf$es_type, unique(estv))
+# Call it lcm3, which follows the required classification
+lcm3 <- terra::subst(lcm2,lcm_idf$landcover_id,lcm_idf$es_id)
+# terra::plot(lcm3, main="Grunnkartet translated to Eurostat ecosystem types")
+```
+And then the NUTS2 shapefile
+```{r}
+
+```
+
+
+```{r}
+# use the weighting as recommended. Here we also need to use the LCM. The guidance specifies that we should compute by city and by ecosystem type 1 through 9 and 11.
+# ecosystem types are specified in table 2.1 on page 29 of the handbook. They are 12 categories in total. And we need all but water.
+
+# do as in flomkontroll
+
+```
+
+### 6.1.2 Weighted average cooling
+
+## 6.2 SUT by city
+
+### 6.2.1 Average cooling
+
+### 6.2.2 Weighted average cooling
+
+
+
