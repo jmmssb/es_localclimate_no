@@ -17,15 +17,15 @@ table {
 
 Magnus Merkle (SSB)
 
-Naturregnskapsprosjekt, 27. August 2026
+Naturregnskapsprosjekt, 03. September 2026
 
 \
 
 # Changelog
 
-Changes since version 0:
+Changes since version 1:
 
-- First version
+- Some text corrections
 
 # Abstract and Limitation
 
@@ -36,7 +36,7 @@ In this notebook we quantify the ecosystem service of local climate regulation (
 - Eurostat (2026) Ecosystem accounts handbook, 2026 edition
 - Immerzeel & Korkou (2024) Evaluation of the INCA-Tool for the purpose of ecosystem services accounting in Norway. EU Grants Project 2022-NO-EGD- Work Package 2. Norwegian Institute for Nature Research
 
-The quantification process follows the Eurostat Ecosystem accounts handbook.
+The quantification process follows the "default approach" described in Eurostat's ecosystem accounts handbook. This approach requires less data capacity than the "advanced approach".
 
 # 1. Filepaths and Functions
 
@@ -98,7 +98,7 @@ dfs[3,]<-c("Estimation and simulation",
            "100m grid",
            "2024",
            "unknown",
-           "This is based on data from USGS, processed by Eurostat to use for European ecosystem service accounting. The data has gaps for most of European cities. It is also unclear whether these data are monthly averages or observations of maximum temperatures.")
+           "This is based on data from USGS, processed by Eurostat to use for European ecosystem service accounting. The data has gaps for most of European cities. It represents (most likely) monthly median temperatures.")
 dfs[4,]<-c("Estimation",
            "Tree cover density data.",
            "TCD_100m_2023_compressed",
@@ -177,7 +177,7 @@ terra::writeVector(cityb_buf,file.path(rfp,"no_citywbuffer.shp"),overwrite=T)
 # print the city names
 # unique(cityb$LAU_NAME)
 ```
-As a result we get `r length(unique(cityb$LAU_NAME))` LAU in Norway that qualify as city. If we count Sandnes to Stavanger, and Bærum, Rælingen and Lørenskog to Oslo, we have four cities in total, namely Bergen, Oslo, Stavanger, and Trondheim. Let's have a look at the land cover map for each of the LAU to be considered. We translate the land cover map to the ecosystem typology required by Eurostat.
+As a result we get `r length(unique(cityb$LAU_NAME))` LAU in Norway that qualify as city. If we count Sandnes to Stavanger, and Bærum, Rælingen and Lørenskog to Oslo, we have four cities in total, namely Bergen, Oslo, Stavanger, and Trondheim. Let's have a look at the land cover map for each of the LAU to be considered. We translate the land cover map to the ecosystem typology required by Eurostat. Category 10 (marine inlets and transitional waters) is missing in the Norwegian LCM. This does not matter for the ecosystem service of local climate regulation as we only consider cooling from vegetation, according to the handbook.
 ```{r,message = FALSE, results = 'hide', fig.height = 9}
 gc()
 # read Grunnkartet -------------------------------------------------------------
@@ -213,9 +213,10 @@ lcm_idf$es_type[lcm_idf$landcover_id %in% c(600,611,623,631)]<-estv[6] # sparse
 lcm_idf$es_type[lcm_idf$landcover_id %in% c(720)]<-estv[7] # wetlands
 lcm_idf$es_type[lcm_idf$landcover_id %in% c(810)]<-estv[8] # rivers
 lcm_idf$es_type[lcm_idf$landcover_id %in% c(910)]<-estv[9] # lakes
+# category 10 (marine inlets and transitional waters) doesn't exist
 lcm_idf$es_type[lcm_idf$landcover_id %in% c(1100)]<-estv[11] # coastal
-lcm_idf$es_type[lcm_idf$landcover_id %in% c(1200)]<-estv[10] # marine inlets
-lcm_idf$es_type[lcm_idf$landcover_id %in% c(9900)]<-estv[12] # marine ecosystems
+lcm_idf$es_type[lcm_idf$landcover_id %in% c(1200)]<-estv[12] # marine ecosystems
+#lcm_idf$es_type[lcm_idf$landcover_id %in% c(9900)]<-estv[12] # marine ecosystems
 # make a numeric identifier also
 lcm_idf$es_id <- match(lcm_idf$es_type, unique(estv))
 # then add to raster
@@ -231,35 +232,20 @@ levels(lcm) <- lev
 # Can always see which categories we have available by calling cats(lcm)
 activeCat(lcm) <- "es_type"
 rm(lev)
-# # download OSM data 
-# # A function to download roads data for specific shapes within Norway
-# osm_get_streets_for_shp<-function(kshp){
-#   # reproject our shape to something that works with degrees
-#   kshp_w84 <- project(kshp, "EPSG:4326")
-#   # download roads
-#   roads <- kshp_w84 %>% 
-#     sf::st_as_sf() %>%
-#     sf::st_bbox() %>% 
-#     osmdata::opq() %>%
-#     osmdata::add_osm_feature(key="highway",value = c("motorway","trunk","primary","secondary")) %>% 
-#     osmdata_sf()
-#   # reproject
-#   roads_t <- roads$osm_lines %>% 
-#     terra::vect() %>%
-#     terra::project(kshp)
-#   # return result
-#   return(roads_t)
-# }
-# road_shp_list<-list()
-# for(i in 1:nrow(cityb_buf)){
-#   print(i)
-#   road_shp_list[[i]]<- osm_get_streets_for_shp(cityb_buf[i,])
-# }
 
 # Make a plot of all cities
+# import street data for better orientation
+roads_list<-list()
+for(i in 1:nrow(cityb_buf)){
+  roads_list[[i]]<-terra::vect(file.path(here::here(),"ancillary_data",
+                                         paste0("roads_",cityb_buf$LAU_ID[i],".shp")))
+}
+names(roads_list)<-cityb_buf$LAU_NAME
 # Let's plot the data
 for(i in 1:nrow(cityb_buf)){
-plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"LCM"), legend=T)
+  plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"LCM"), legend=T)
+  plot(roads_list[[i]],add=T)
+  
 }
 ```
 
@@ -287,47 +273,20 @@ for(i in 1:nrow(stations)){
 # clean up
 rm(stations,tempd,heatmonths)
 ```
-So this shows that June and July are the months where we have observed daily max temps exceeding 25 degrees in all weather stations within the cities in question in 2024. August and September are months in which some city LAU have observed max temps exceeding 25 degrees. The Eurostat handbook suggests to use an inclusive approach. We therefore pick all available months for the LST data, which we read in next.
+So this shows that June and July are the months where we have observed daily max temps exceeding 25 degrees in all weather stations within the cities in question in 2024. August and September are months in which some city LAU have observed max temps exceeding 25 degrees. The Eurostat handbook suggests to use an inclusive approach. We therefore pick all available months for the LST data, which we read in next. Croping and reprojection is done outside of this script, because it is a computationally time-intensive process
 ```{r,message = FALSE, results = 'hide'}
 gc()
 # read LST raster file ---------------------------------------------------------
-# Here we have data available for June, July, August, September, but we only
-# pick June and July, as described above.
-lstr_6<-terra::rast(file.path(dfp,"version_2026_7",
-                           "inca_input_local_climate_regulation",
-                           "Land_Surface_Temperature","2024",
-                           "06_LST_2024_eu_masked.tif"))
-lstr_7<-terra::rast(file.path(dfp,"version_2026_7",
-                           "inca_input_local_climate_regulation",
-                           "Land_Surface_Temperature","2024",
-                           "07_LST_2024_eu_masked.tif"))
-lstr_8<-terra::rast(file.path(dfp,"version_2026_7",
-                           "inca_input_local_climate_regulation",
-                           "Land_Surface_Temperature","2024",
-                           "08_LST_2024_eu_masked.tif"))
-lstr_9<-terra::rast(file.path(dfp,"version_2026_7",
-                           "inca_input_local_climate_regulation",
-                           "Land_Surface_Temperature","2024",
-                           "09_LST_2024_eu_masked.tif"))
-# rough crop ext
-norcrop <- ext(
-  3.5e6, 5.5e6, # xmin, xmax
-  3.5e6, 5.5e6 # ymin, ymax
-)
-lstr_6_no <- crop(lstr_6,norcrop)
-lstr_7_no <- crop(lstr_7,norcrop)
-lstr_8_no <- crop(lstr_8,norcrop)
-lstr_9_no <- crop(lstr_9,norcrop)
-
-# reproject
-gc()
-lstr_6_no <- terra::project(lstr_6_no,"EPSG:25833")
-gc()
-lstr_7_no <- terra::project(lstr_7_no,"EPSG:25833")
-gc()
-lstr_8_no <- terra::project(lstr_8_no,"EPSG:25833")
-gc()
-lstr_9_no <- terra::project(lstr_9_no,"EPSG:25833")
+# Here we have data available for June, July, August, September, and we pick
+# as described above.
+lstr_6_no<-terra::rast(file.path(here::here(),"ancillary_data",
+                                 "lstr_6_no.tif"))
+lstr_7_no<-terra::rast(file.path(here::here(),"ancillary_data",
+                                 "lstr_7_no.tif"))
+lstr_8_no<-terra::rast(file.path(here::here(),"ancillary_data",
+                                 "lstr_8_no.tif"))
+lstr_9_no<-terra::rast(file.path(here::here(),"ancillary_data",
+                                 "lstr_9_no.tif"))
 
 # mask to city LAUs
 lstr_6_no <- mask(crop(lstr_6_no,cityb_buf),cityb_buf)
@@ -340,10 +299,17 @@ lstr_9_no <- mask(crop(lstr_9_no,cityb_buf),cityb_buf)
 # https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature
 # You can trace the step in line 131 here
 # https://code.europa.eu/inca/gis-plugins/gis-plugins/-/blob/main/src/inca/localclimate/preprocessing/preprocess_LST.js?ref_type=heads
+# Before running regressions, VITO changes the unit to celsuis. See line 195 here:
+# https://code.europa.eu/inca/gis-plugins/gis-plugins/-/blob/main/src/inca/localclimate/__init__.py?ref_type=heads
+# so we do that here too.
+lstr_6_no <- lstr_6_no - 273.15
+lstr_7_no <- lstr_7_no - 273.15
+lstr_8_no <- lstr_8_no - 273.15
+lstr_9_no <- lstr_9_no - 273.15
 
 # Move LST data all into one stack
 lstr_stack <- c(lstr_6_no,lstr_7_no,lstr_8_no,lstr_9_no)
-rm(lstr_6_no,lstr_7_no,lstr_8_no,lstr_9_no,lstr_6,lstr_7,lstr_8,lstr_9)
+rm(lstr_6_no,lstr_7_no,lstr_8_no,lstr_9_no)
 ```
 
 Then plot the LST data, to show that it has gaps. We use the land cover map as background. First for June:
@@ -352,7 +318,8 @@ gc()
 # Let's plot the data
 for(i in 1:nrow(cityb_buf)){
 plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"June"), legend=F)
-plot(mask(crop(lstr_stack[[1]], cityb_buf[i,]),cityb_buf[i,]),add=T,alpha=0.8)
+plot(mask(crop(lstr_stack[[1]], cityb_buf[i,]),cityb_buf[i,]),add=T)
+plot(roads_list[[i]],add=T)
 }
 ```
 
@@ -362,7 +329,8 @@ gc()
 # Let's plot the data
 for(i in 1:nrow(cityb_buf)){
 plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"July"), legend=F)
-plot(mask(crop(lstr_stack[[2]], cityb_buf[i,]),cityb_buf[i,]),add=T,alpha=0.8)
+plot(mask(crop(lstr_stack[[2]], cityb_buf[i,]),cityb_buf[i,]),add=T)
+plot(roads_list[[i]],add=T)
 }
 ```
 So for month July the largest gaps prevail in the LST data for Sandnes, Trondheim, and Bærum. Also substantial gaps for Oslo and Bergen, and some for Stavanger, Rælingen, and Lørenskog. The gaps do not look much different in the data for the other available months, so I omit plotting those here.
@@ -370,6 +338,12 @@ So for month July the largest gaps prevail in the LST data for Sandnes, Trondhei
 Then we read in the other raster files needed. Tree cover density and then evaporation. For evaporation we have the choice between different datasets. One covering July to August, one covering June to August, and a third covering June to September. There is no guidance in the Eurostat handbook on which data to choose. To match the LST data selection, we choose to use June to September.
 ```{r, message = FALSE, results = 'hide'}
 gc()
+# rough crop
+norcrop <- ext(
+  3.5e6, 5.5e6, # xmin, xmax
+  3.5e6, 5.5e6 # ymin, ymax
+)
+
 # read TCD raster file ---------------------------------------------------------
 tcdr<-terra::rast(file.path(dfp,"version_2026_7",
                            "inca_input_local_climate_regulation",
@@ -412,8 +386,8 @@ gc()
 mdr<-c(6,7,8,9)
 
 # our dataframe for results
-reg1df<-as.data.frame(matrix(nrow=1,ncol=10))
-colnames(reg1df)<-c("month","city","est_intercept","adj_r2","n_used","n_rm","n_rm_p_due_lst_only","n_rm_p_due_tcd_only","n_rm_p_due_evap_only","n_rm_p_due_several")
+reg1df<-as.data.frame(matrix(nrow=1,ncol=12))
+colnames(reg1df)<-c("month","city","est_intercept","adj_r2","n_used","n_rm","n_total","n_p_used","n_rm_p_due_lst_only","n_rm_p_due_tcd_only","n_rm_p_due_evap_only","n_rm_p_due_several")
 # function
 first_regression_function<-function(cityshp,lst_rfile,tcd_rfile,evap_rfile){
   # Step 1: Crop the data to the right shape, stack it, and turn into df
@@ -435,20 +409,24 @@ first_regression_function<-function(cityshp,lst_rfile,tcd_rfile,evap_rfile){
   rv[3]<- nobs(elm)
   # number of observations removed due to missing data
   rv[4]<- nrow(edf) - nobs(elm)
+  # total number of pixels
+  rv[5]<- nrow(edf) 
+  # proportion of observations used ("valid pixels")
+  rv[6]<-round(rv[3]/nrow(edf),digits=2)
   # proportion of removed ovservations due to missing lst data only
-  rv[5]<- round(sum(is.na(edf$lst) &
+  rv[7]<- round(sum(is.na(edf$lst) &
                      !is.na(edf$evap) &
                      !is.na(edf$tcd)) / rv[4],digits=2)
   # proportion of removed ovservations due to missing tcd data only
-  rv[6]<- round(sum(is.na(edf$tcd) &
+  rv[8]<- round(sum(is.na(edf$tcd) &
                       !is.na(edf$evap) &
                       !is.na(edf$lst)) / rv[4],digits=2)
   # proportion of removed ovservations due to missing evap data only
-  rv[7]<- round(sum(is.na(edf$evap) &
+  rv[9]<- round(sum(is.na(edf$evap) &
                       !is.na(edf$lst) &
                       !is.na(edf$tcd)) / rv[4],digits=2)
   # proportion of removed observations due to several missing variables
-  rv[8]<-round(sum(rowSums(is.na(edf[, c("lst", "evap", "tcd")])) >= 2)/rv[4],digits=2)
+  rv[10]<-round(sum(rowSums(is.na(edf[, c("lst", "evap", "tcd")])) >= 2)/rv[4],digits=2)
   # clean up and return result
   rm(edf,elm)
   return(rv)
@@ -461,13 +439,18 @@ for(j in 1:length(mdr)){
   for(i in 1:nrow(cityb_buf)){
     rl[[j]][i,1]<-mdr[j]
     rl[[j]][i,2]<-as.data.frame(cityb_buf[i,])$LAU_NAME
-    rl[[j]][i,3:10]<-first_regression_function(cityshp = cityb_buf[i,],
+    rl[[j]][i,3:12]<-first_regression_function(cityshp = cityb_buf[i,],
                                 lst_rfile = lstr_stack[[j]],
                                 tcd_rfile = tcdr_no,
                                 evap_rfile = evapr_no)
   }
 }
 firstdf<-do.call("rbind",rl)
+# add city codes
+firstdf <- firstdf %>% 
+  mutate(city_code = cityb_buf$LAU_ID[match(city,cityb_buf$LAU_NAME)]) %>%
+  relocate(city_code,.after=city)
+#clean up
 rm(reg1df,rl)
 
 # save intercept in raster stack
@@ -482,7 +465,7 @@ for (j in seq_along(mdr)) {
     # attach intercepts and convert to degree celsius
   city_month$est_intercept <- month_df$est_intercept[
     match(city_month$LAU_NAME, month_df$city)
-  ] - 273.15
+  ]
     # rasterize
   intercept_rasters[[j]] <- terra::rasterize(
     city_month,
