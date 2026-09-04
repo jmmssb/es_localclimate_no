@@ -26,6 +26,8 @@ Naturregnskapsprosjekt, 03. September 2026
 Changes since version 1:
 
 - Some text corrections
+- Changed to 150m resolution as done in INCA
+- Changed to Grunnkartet's CRS
 
 # Abstract and Limitation
 
@@ -152,6 +154,9 @@ Read in city shapefiles, LST raster, TCD raster, EVAP raster. We also import Nor
 We start by identifying cities in Norway that are counted within category "city" in the DGURBA dataset.
 ```{r,message = FALSE, results = 'hide'}
 gc()
+# read Grunnkartet -------------------------------------------------------------
+lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
+
 # read city shapefiles ---------------------------------------------------------
 # Readme file in INCA's data repository states DEGURBA should be used for 2026
 # reporting
@@ -167,9 +172,11 @@ cityb<-terra::vect(file.path(dfp,"version_2026_7",
 cityb<-cityb[cityb$CNTR_CODE == "NO",]
 # And then we subset to feature category 1 urban only.
 cityb<-cityb[cityb$DGURBA == 1,]
-# For further operations we reproject the map to EPSG 25833 and we add a 150m
+# For further operations we reproject the map to LCM's CRS and we add a 150m
 # buffer to the LAU polygons, as suggested by the handbook
-cityb <- terra::project(cityb,"EPSG:25833")
+# INCA introduces the same buffer. See line 280 here:
+# https://code.europa.eu/inca/gis-plugins/gis-plugins/-/blob/main/src/inca/localclimate/__init__.py?ref_type=heads
+cityb <- terra::project(cityb,lcm)
 cityb_buf <- terra::buffer(cityb,150)
 # save
 terra::writeVector(cityb,file.path(rfp,"no_city.shp"),overwrite=T)
@@ -180,11 +187,7 @@ terra::writeVector(cityb_buf,file.path(rfp,"no_citywbuffer.shp"),overwrite=T)
 As a result we get `r length(unique(cityb$LAU_NAME))` LAU in Norway that qualify as city. If we count Sandnes to Stavanger, and Bærum, Rælingen and Lørenskog to Oslo, we have four cities in total, namely Bergen, Oslo, Stavanger, and Trondheim. Let's have a look at the land cover map for each of the LAU to be considered. We translate the land cover map to the ecosystem typology required by Eurostat. Category 10 (marine inlets and transitional waters) is missing in the Norwegian LCM. This does not matter for the ecosystem service of local climate regulation as we only consider cooling from vegetation, according to the handbook.
 ```{r,message = FALSE, results = 'hide', fig.height = 9}
 gc()
-# read Grunnkartet -------------------------------------------------------------
-lcm<-terra::rast(file.path(dfp,"Norway_files","Grunnkart","Grunnkart_OT.tif"))
-# project to what we use in this project
-lcm <- terra::project(lcm,"EPSG:25833")
-# then the recategorisation
+# then the recategorisation of grunnkartet
 lcm_idf<-read.csv(file.path(dfp,"Norway_files","Grunnkart",
                             "Lookup_grunnkart.csv"))
 lcm_idf <- rbind(lcm_idf,c(NA,9900,"unclassified","uklassifisert"))
@@ -333,7 +336,7 @@ plot(mask(crop(lstr_stack[[2]], cityb_buf[i,]),cityb_buf[i,]),add=T)
 plot(roads_list[[i]],add=T)
 }
 ```
-So for month July the largest gaps prevail in the LST data for Sandnes, Trondheim, and Bærum. Also substantial gaps for Oslo and Bergen, and some for Stavanger, Rælingen, and Lørenskog. The gaps do not look much different in the data for the other available months, so I omit plotting those here.
+So for month July the largest gaps prevail in the LST data for Sandnes, Trondheim, and Bærum. Also substantial gaps for Oslo and Bergen, and some for Stavanger, Rælingen, and Lørenskog. The gaps do not look much different in the data for the other available months, so I omit plotting those here. I was wondering whether they could occur due to clouds, blanking out parts of the original satellite picture? On the other hand, I notice that some of the gaps look quite similar across months, which makes the cloud hypothesis less likely. In any case, what we could do in a next version is to compute median or mean values across months first, so we get an LST map with the best possible coverage. Given that INCA only reads in one single LST file at a time, I currently stick the seperate month-wise calculations, to allow comparison of resuts to INCA outputs.
 
 Then we read in the other raster files needed. Tree cover density and then evaporation. For evaporation we have the choice between different datasets. One covering July to August, one covering June to August, and a third covering June to September. There is no guidance in the Eurostat handbook on which data to choose. To match the LST data selection, we choose to use June to September.
 ```{r, message = FALSE, results = 'hide'}
@@ -344,6 +347,30 @@ norcrop <- ext(
   3.5e6, 5.5e6 # ymin, ymax
 )
 
+# read EVAP raster file --------------------------------------------------------
+evapr<-terra::rast(file.path(dfp,"version_2026_7",
+                           "inca_input_local_climate_regulation",
+                           "Vegetation_Evapotranspiration","2024",
+                           "interc_transp_2024_Jun-Jul-Aug-Sept.tif"))
+# I have found one funny thing here. The metadata in this raster file includes a
+# scale factor of 0.01. R terra automatically applies this to the values of the 
+# file, so it contains realistic numbers. But the python code in INCA does not
+# apply the scale factor. Therefore, numbers in INCA for evapotranspiration are 
+# 100 times larger than here. For now, I manually change this here, so we have
+# results as close.
+
+# rough crop
+evapr_no <- crop(evapr,norcrop)
+# reproject
+evapr_no <- terra::project(evapr_no,crs(lcm),res=res(evapr_no),method="bilinear")
+# mask to city lau
+evapr_no <- mask(crop(evapr_no,cityb_buf),cityb_buf)
+evapr_no <- 100*evapr_no # this step to immitate what INCA does (but it actually
+# is not correct)
+# When plotting the resulting map we see that it is a bit patchy, too. Possibly
+# revisit later.
+
+
 # read TCD raster file ---------------------------------------------------------
 tcdr<-terra::rast(file.path(dfp,"version_2026_7",
                            "inca_input_local_climate_regulation",
@@ -352,26 +379,14 @@ tcdr<-terra::rast(file.path(dfp,"version_2026_7",
 # rough crop
 tcdr_no <- crop(tcdr,norcrop)
 # reproject
-tcdr_no <- terra::project(tcdr_no,"EPSG:25833")
+tcdr_no <- terra::project(tcdr_no,evapr_no)
 # mask to city lau
 tcdr_no <- mask(crop(tcdr_no,cityb_buf),cityb_buf)
 # MM I have checked the resulting data and it looks fine. No gaps.
 
-# read EVAP raster file --------------------------------------------------------
-evapr<-terra::rast(file.path(dfp,"version_2026_7",
-                           "inca_input_local_climate_regulation",
-                           "Vegetation_Evapotranspiration","2024",
-                           "interc_transp_2024_Jun-Jul-Aug-Sept.tif"))
-# rough crop
-evapr_no <- crop(evapr,norcrop)
-# reproject
-evapr_no <- terra::project(evapr_no,"EPSG:25833")
-# resample (because the data has a different resolution)
-evapr_no <- terra::resample(evapr_no, tcdr_no)
-# mask to city lau
-evapr_no <- mask(crop(evapr_no,cityb_buf),cityb_buf)
-# When plotting the resulting map we see that it is a bit patchy, too. Possibly
-# revisit later.
+# reproject lst raster data ----------------------------------------------------
+lstr_stack<-terra::project(lstr_stack,evapr_no)
+
 # tidy up
 rm(tcdr,evapr)
 ```
@@ -386,8 +401,11 @@ gc()
 mdr<-c(6,7,8,9)
 
 # our dataframe for results
-reg1df<-as.data.frame(matrix(nrow=1,ncol=12))
-colnames(reg1df)<-c("month","city","est_intercept","adj_r2","n_used","n_rm","n_total","n_p_used","n_rm_p_due_lst_only","n_rm_p_due_tcd_only","n_rm_p_due_evap_only","n_rm_p_due_several")
+reg1df<-as.data.frame(matrix(nrow=1,ncol=14))
+colnames(reg1df)<-c("month","city","pixels_in_shp","p_pixels_used","p_pixels_rm",
+                    "p_pixels_rm_due_na_lcm","p_pixels_rm_due_na_data","avg_lst",
+                    "avg_tcd","avg_evap","est_intercept","est_tcd","est_evap",
+                    "R2")
 # function
 first_regression_function<-function(cityshp,lst_rfile,tcd_rfile,evap_rfile){
   # Step 1: Crop the data to the right shape, stack it, and turn into df
@@ -401,32 +419,30 @@ first_regression_function<-function(cityshp,lst_rfile,tcd_rfile,evap_rfile){
   elm <- lm(lst ~ tcd + evap, data = edf)
   # Step 3: Save relevant info
   rv<-vector()
-  # estimated intercept of the linear model
-  rv[1]<- elm$coefficients[1]
-  # adjusted r squared
-  rv[2]<- summary(elm)$adj.r.squared
-  # observations used
-  rv[3]<- nobs(elm)
-  # number of observations removed due to missing data
-  rv[4]<- nrow(edf) - nobs(elm)
-  # total number of pixels
-  rv[5]<- nrow(edf) 
-  # proportion of observations used ("valid pixels")
-  rv[6]<-round(rv[3]/nrow(edf),digits=2)
-  # proportion of removed ovservations due to missing lst data only
-  rv[7]<- round(sum(is.na(edf$lst) &
-                     !is.na(edf$evap) &
-                     !is.na(edf$tcd)) / rv[4],digits=2)
-  # proportion of removed ovservations due to missing tcd data only
-  rv[8]<- round(sum(is.na(edf$tcd) &
-                      !is.na(edf$evap) &
-                      !is.na(edf$lst)) / rv[4],digits=2)
-  # proportion of removed ovservations due to missing evap data only
-  rv[9]<- round(sum(is.na(edf$evap) &
-                      !is.na(edf$lst) &
-                      !is.na(edf$tcd)) / rv[4],digits=2)
-  # proportion of removed observations due to several missing variables
-  rv[10]<-round(sum(rowSums(is.na(edf[, c("lst", "evap", "tcd")])) >= 2)/rv[4],digits=2)
+  # total pixel number in shape
+  rv[1] <- mask(crop(init(lst_rfile, 1), cityshp), cityshp) %>% ncell()
+  # proportion of pixels used
+  rv[2] <- nobs(elm) / rv[1]
+  # proportion of pixels removed
+  rv[3] <- 1 - rv[2]
+  # proportion of pixels removed because outside of lcm data
+  rv[4] <- 1 - (nrow(edf) / rv[1])
+  # proportion of pixels removed because of data gaps (lst,tcd,evap)
+  rv[5] <- (nrow(edf) - nobs(elm)) / rv[1]
+  # average land surface temp
+  rv[6] <- mean(edf$lst,na.rm=T)
+  # average tree cover density
+  rv[7] <- mean(edf$tcd,na.rm=T)
+  # average evapotranspiration
+  rv[8] <- mean(edf$evap,na.rm=T)
+  # estimated intercept
+  rv[9] <- elm$coefficients[1]
+  # estimated coefficient on tre cover density
+  rv[10] <- elm$coefficients[2]
+  # estimated coefficient on evaporation
+  rv[11] <- elm$coefficients[3]
+  # model fit
+  rv[12] <- summary(elm)$r.squared
   # clean up and return result
   rm(edf,elm)
   return(rv)
@@ -439,7 +455,7 @@ for(j in 1:length(mdr)){
   for(i in 1:nrow(cityb_buf)){
     rl[[j]][i,1]<-mdr[j]
     rl[[j]][i,2]<-as.data.frame(cityb_buf[i,])$LAU_NAME
-    rl[[j]][i,3:12]<-first_regression_function(cityshp = cityb_buf[i,],
+    rl[[j]][i,3:14]<-first_regression_function(cityshp = cityb_buf[i,],
                                 lst_rfile = lstr_stack[[j]],
                                 tcd_rfile = tcdr_no,
                                 evap_rfile = evapr_no)
@@ -541,7 +557,7 @@ $$ cooling_{j,i} = T^{air}_{j,i} - T^{air,0}_{j,i} $$.
 
 ## 5.2 Create cooling rasters
 
-Make a loop where we compute the cooling rasters for each city in each month.
+Make a loop where we compute the cooling rasters for each city in each month. Here we plot June:
 ```{r,message = FALSE, results = 'hide', fig.height = 9}
 gc()
 # first we create a latitude raster
@@ -558,9 +574,9 @@ cooling_rasters <- vector("list", length(mdr))
 # loop across months
 for (j in seq_along(mdr)) {
   # modelled temp
-  tairr <- (lstr_stack[[j]] - 273.15)*beta2h #+ lat_r*gamma2h
+  tairr <- lstr_stack[[j]] * beta2h #+ lat_r*gamma2h
   # modelled temp no trees
-  tairnr <- intercept_stack[[j]]*beta2h #+ lat_r*gamma2h
+  tairnr <- intercept_stack[[j]] * beta2h #+ lat_r*gamma2h
   # cooling
   coolingr <- tairr - tairnr
   # save
@@ -581,19 +597,31 @@ lcm <- resample(
 # need to recode lcm raster
 rcl <- as.matrix(cats(lcm)[[1]][, c("Value", "es_id")])
 lcm2 <- classify(lcm, rcl)
-# then plot
-for(j in 1:4){
-  plot(mask(crop(lcm, cooling_stack[[j]]),cooling_stack[[j]]),
-       main = names(cooling_stack)[j],
-       legend = FALSE)
-  plot(
-    cooling_stack[[j]],
-    add = TRUE,alpha = 0.8)
+# then plot for June
+for(j in 1){
+  for(i in 1:nrow(cityb_buf)){
+    plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"month",mdr[j]), legend=F)
+    plot(mask(crop(cooling_stack[[j]], cityb_buf[i,]),cityb_buf[i,]),add=T)
+    plot(roads_list[[i]],add=T)
+  }
 }
 
 # tidy up
 rm(lat_r,cooling_rasters)
 ```
+
+And then plot July
+```{r,message = FALSE, results = 'hide', fig.height = 9}
+# then plot for July
+for(j in 2){
+  for(i in 1:nrow(cityb_buf)){
+    plot(mask(crop(lcm, cityb_buf[i,]),cityb_buf[i,]),main=paste(cityb_buf$LAU_NAME[i],"month",mdr[j]), legend=F)
+    plot(mask(crop(cooling_stack[[j]], cityb_buf[i,]),cityb_buf[i,]),add=T)
+    plot(roads_list[[i]],add=T)
+  }
+}
+```
+
 
 # 6. Summarise results
 

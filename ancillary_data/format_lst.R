@@ -33,13 +33,13 @@ lstr_9_no <- crop(lstr_9,norcrop)
 
 # reproject
 gc()
-lstr_6_no <- terra::project(lstr_6_no,"EPSG:25833")
+lstr_6_no <- terra::project(lstr_6_no,lcm)
 gc()
-lstr_7_no <- terra::project(lstr_7_no,"EPSG:25833")
+lstr_7_no <- terra::project(lstr_7_no,lcm)
 gc()
-lstr_8_no <- terra::project(lstr_8_no,"EPSG:25833")
+lstr_8_no <- terra::project(lstr_8_no,lcm)
 gc()
-lstr_9_no <- terra::project(lstr_9_no,"EPSG:25833")
+lstr_9_no <- terra::project(lstr_9_no,lcm)
 
 # save
 writeRaster(lstr_6_no,file.path(fp,"lstr_6_no.tif"),overwrite =T)
